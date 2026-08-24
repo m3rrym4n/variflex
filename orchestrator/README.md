@@ -42,7 +42,7 @@ The MCP Streamable HTTP endpoint is `/mcp/`; the health endpoint is `/`.
 
 ### Repository registry
 
-Every dispatched repository must appear in `TASK_RUNNER_REPOS`. Each entry
+Every dispatched repository must appear in the live repository registry. Each entry
 selects one configured runner and records both its automatically deployed `dev`
 target and human-promoted `main` target. Targets require `container`, `volume`,
 and a positive integer `port`. Optional `health_path` and `expected_content`
@@ -56,9 +56,9 @@ entries must also set `host_base_url` to the non-empty base URL of their Forgejo
 instance. GitHub entries must not set `host_base_url`. These fields are
 validated registry metadata only; dispatch does not consume them yet.
 
-The live repository configuration is maintained in
-[`deploy/repos.json`](deploy/repos.json). Set the environment variable from the
-file when starting the service, for example:
+The registry is stored in Variflex's SQLite database. `TASK_RUNNER_REPOS` is an
+optional seed used only when that database has no registry row yet. The checked-in
+[`deploy/repos.json`](deploy/repos.json) can bootstrap a fresh database, for example:
 
 ```bash
 TASK_RUNNER_REPOS="$(tr -d '\n' < deploy/repos.json)"
@@ -70,8 +70,10 @@ lower-cost model and `ff-mcp`/`nfl-mcp` endpoints set per repository. Their
 sentinel deploy targets preserve the existing no-deploy behavior: those tool
 services are operated independently and task dispatch must not replace them.
 
-`GET /api/repos` exposes the parsed, validated values to internal pipeline and
-dashboard consumers. Dispatch rejects missing repositories and runner
+`GET /api/repos` exposes the current database-backed values to internal pipeline
+and dashboard consumers. `PUT /api/repos` accepts a complete JSON array, validates
+it with the same rules as the seed, and atomically replaces the registry. Changes
+take effect for dispatch immediately without restarting Variflex. Dispatch rejects missing repositories and runner
 mismatches before creating a task row. `pacific-shift-mcp-proxy` is deliberately
 absent because its Home Assistant add-on deployment does not use this container
 target model.

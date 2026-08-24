@@ -93,6 +93,16 @@ class RepoConfig:
         )
 
 
+def parse_repo_configs(values: Any) -> list[RepoConfig]:
+    if not isinstance(values, list) or not all(isinstance(value, dict) for value in values):
+        raise ValueError("TASK_RUNNER_REPOS must be a JSON array of repo config objects")
+    repos = [RepoConfig.from_dict(value) for value in values]
+    repo_names = [repo.repo for repo in repos]
+    if len(repo_names) != len(set(repo_names)):
+        raise ValueError("TASK_RUNNER_REPOS must not contain duplicate repos")
+    return repos
+
+
 def parse_interval_seconds(value: Any) -> float:
     if isinstance(value, int | float) and not isinstance(value, bool):
         interval = float(value)
@@ -284,10 +294,7 @@ class Settings:
             raise ValueError("TASK_RUNNER_OPS_IMAGE_CHECKS must be a JSON array of ops image check objects")
         raw_repos = os.getenv("TASK_RUNNER_REPOS", "[]")
         repo_values = json.loads(raw_repos)
-        if not isinstance(repo_values, list) or not all(
-            isinstance(value, dict) for value in repo_values
-        ):
-            raise ValueError("TASK_RUNNER_REPOS must be a JSON array of repo config objects")
+        repos = parse_repo_configs(repo_values)
         raw_dockhand_env = os.getenv("TASK_RUNNER_DOCKHAND_ENV")
         dockhand_env = int(raw_dockhand_env) if raw_dockhand_env else None
         return cls(
@@ -295,7 +302,7 @@ class Settings:
             runners=runners,
             scheduled_tasks=[ScheduledTask.from_dict(value) for value in scheduled_task_values],
             ops_image_checks=[OpsImageCheck.from_dict(value) for value in ops_image_check_values],
-            repos=[RepoConfig.from_dict(value) for value in repo_values],
+            repos=repos,
             timeout_seconds=float(os.getenv("TASK_RUNNER_TIMEOUT_SECONDS", "600")),
             output_cap_bytes=int(os.getenv("TASK_RUNNER_OUTPUT_CAP_BYTES", "1000000")),
             poll_interval_seconds=float(os.getenv("TASK_RUNNER_POLL_INTERVAL_SECONDS", "2")),
