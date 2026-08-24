@@ -332,6 +332,23 @@ def test_settings_reads_repo_registry(monkeypatch):
     ]
 
 
+def test_repository_registry_seed_is_used_only_for_fresh_database(tmp_path):
+    service = make_service(tmp_path, FakeRunner())
+    service.initialize_repo_registry()
+    replacement = [{
+        "repo": "owner/persisted",
+        "runner": "codex",
+        "dev": {"container": "dev", "volume": "dev-data", "port": 1},
+        "main": {"container": "main", "volume": "main-data", "port": 2},
+    }]
+    service.replace_repo_configs(replacement)
+
+    restarted = make_service(tmp_path, FakeRunner(), repos=[])
+    restarted.initialize_repo_registry()
+
+    assert [repo["repo"] for repo in restarted.list_repo_configs()] == ["owner/persisted"]
+
+
 def test_repo_registry_accepts_spawn_time_model_and_mcp_configuration(monkeypatch):
     monkeypatch.setenv(
         "TASK_RUNNER_REPOS",

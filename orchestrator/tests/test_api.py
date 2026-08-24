@@ -185,6 +185,50 @@ def test_repo_registry_endpoint_returns_deploy_targets(tmp_path, monkeypatch):
     assert response.json()["repos"][0]["dev"]["container"] == "app-dev"
 
 
+def test_repo_registry_put_replaces_live_dispatch_registry(tmp_path, monkeypatch):
+    service = make_service(tmp_path, FakeRunner())
+    monkeypatch.setattr(main, "service", service)
+    client = TestClient(main.app)
+    replacement = [{
+        "repo": "owner/new",
+        "runner": "codex",
+        "dev": {"container": "new-dev", "volume": "new-dev-data", "port": 8101},
+        "main": {"container": "new", "volume": "new-data", "port": 8100},
+    }]
+
+    response = client.put("/api/repos", json=replacement)
+
+    assert response.status_code == 200
+    assert client.get("/api/repos").json()["repos"][0]["repo"] == "owner/new"
+    assert asyncio.run(service.run_task("owner/new", 91, "codex"))["runner"] == "codex"
+    try:
+        asyncio.run(service.run_task("owner/repo", 91, "codex"))
+    except ValueError as exc:
+        assert "not registered" in str(exc)
+    else:
+        raise AssertionError("removed repository remained dispatchable")
+
+
+def test_repo_registry_put_rejects_invalid_list_without_changing_store(tmp_path, monkeypatch):
+    service = make_service(tmp_path, FakeRunner())
+    service.initialize_repo_registry()
+    monkeypatch.setattr(main, "service", service)
+    client = TestClient(main.app)
+    before = client.get("/api/repos").json()
+
+    response = client.put("/api/repos", json=[{
+        "repo": "owner/broken",
+        "runner": "codex",
+        "dev": {"container": "broken-dev", "volume": "data"},
+        "main": {"container": "broken", "volume": "data", "port": 8000},
+    }])
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "repo dev port must be a positive integer"}
+    assert client.get("/api/repos").json() == before
+    assert service.database.load_repo_configs() == before["repos"]
+
+
 async def wait_for_halt(service):
     for _ in range(100):
         queue = service._repo_queues["owner/repo"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +59,11 @@ class Database:
                 CREATE TABLE IF NOT EXISTS runner_queue_items (
                     runner TEXT NOT NULL, position INTEGER NOT NULL, task_id TEXT NOT NULL UNIQUE,
                     PRIMARY KEY (runner, position)
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS repository_registry (
+                    id INTEGER PRIMARY KEY CHECK (id = 1), config_json TEXT NOT NULL
                 )
             """)
 
@@ -136,3 +142,25 @@ class Database:
         with self._lock, self.connect() as db:
             db.execute("DELETE FROM runner_queue_items WHERE runner=?", (runner,))
             db.execute("DELETE FROM runner_queue_state WHERE runner=?", (runner,))
+
+    def seed_repo_configs(self, configs: list[dict[str, Any]]) -> None:
+        with self._lock, self.connect() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO repository_registry (id, config_json) VALUES (1, ?)",
+                (json.dumps(configs),),
+            )
+
+    def load_repo_configs(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT config_json FROM repository_registry WHERE id = 1"
+            ).fetchone()
+        return json.loads(row["config_json"]) if row else []
+
+    def replace_repo_configs(self, configs: list[dict[str, Any]]) -> None:
+        with self._lock, self.connect() as db:
+            db.execute(
+                "INSERT INTO repository_registry (id, config_json) VALUES (1, ?) "
+                "ON CONFLICT(id) DO UPDATE SET config_json=excluded.config_json",
+                (json.dumps(configs),),
+            )
