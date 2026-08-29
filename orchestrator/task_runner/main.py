@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, status
 from mcp.server.fastmcp import FastMCP
@@ -17,15 +17,6 @@ from .service import TaskService
 settings = Settings.from_env()
 database = Database(settings.database_path)
 git_hosts = {"github": GitHubClient(settings.github_token)}
-forgejo_base_urls = {
-    repo.host_base_url for repo in settings.repos if repo.host == "forgejo"
-}
-if len(forgejo_base_urls) > 1:
-    raise ValueError("Configured Forgejo repositories must use the same host_base_url")
-if forgejo_base_urls:
-    forgejo_base_url = forgejo_base_urls.pop()
-    assert forgejo_base_url is not None
-    git_hosts["forgejo"] = ForgejoClient(forgejo_base_url, settings.forgejo_token)
 service = TaskService(
     settings,
     database,
@@ -81,9 +72,21 @@ def list_tasks() -> list[dict]:
 mcp_app = mcp.streamable_http_app()
 
 
+def configure_forgejo_client(configs: list[dict[str, Any]] | None = None) -> None:
+    configs = configs if configs is not None else service.list_repo_configs()
+    forgejo_repos = [repo for repo in configs if repo.get("host") == "forgejo"]
+    if forgejo_repos:
+        base_url = forgejo_repos[0]["host_base_url"]
+        service.git_hosts["forgejo"] = ForgejoClient(base_url, settings.forgejo_token)
+    else:
+        service.git_hosts.pop("forgejo", None)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.initialize()
+    service.initialize_repo_registry()
+    configure_forgejo_client()
     service.resume_running_tasks()
     service.start_scheduler()
     async with mcp.session_manager.run():
@@ -169,6 +172,16 @@ async def api_clear_runner_halt(repo: str) -> dict:
 @app.get("/api/repos")
 def api_repos() -> dict:
     return {"repos": service.list_repo_configs()}
+
+
+@app.put("/api/repos")
+def api_replace_repos(repos: list[dict[str, Any]]) -> dict:
+    try:
+        updated = service.replace_repo_configs(repos)
+        configure_forgejo_client(updated)
+        return {"repos": updated}
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 app.mount("/mcp", mcp_app)

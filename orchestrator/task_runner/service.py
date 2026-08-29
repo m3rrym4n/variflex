@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from .config import OpsImageCheck, RepoConfig, ScheduledTask, Settings
+from .config import OpsImageCheck, RepoConfig, ScheduledTask, Settings, parse_repo_configs
 from .database import Database
 from .dockhand import ContainerDeployResult, ContainerSnapshot, DockhandClient
 from .git_host import GitHostClient
@@ -57,7 +57,16 @@ class TaskService:
         self._internal_ops_jobs: dict[str, OpsImageRebuildJob] = {}
         self._queue_lock = asyncio.Lock()
         self._repo_queues = {repo.repo: RunnerQueue() for repo in settings.repos}
+        self._repos = list(settings.repos)
         self.logger = logging.getLogger(__name__)
+
+    def initialize_repo_registry(self) -> None:
+        seed = [self._repo_to_dict(repo) for repo in self.settings.repos]
+        self.database.seed_repo_configs(seed)
+        self._repos = parse_repo_configs(self.database.load_repo_configs())
+        self._validate_repo_set(self._repos)
+        for repo in self._repos:
+            self._repo_queues.setdefault(repo.repo, RunnerQueue())
 
     def start_scheduler(self) -> None:
         if self._scheduler_jobs:
@@ -218,21 +227,40 @@ class TaskService:
         return receipt
 
     def get_repo_config(self, repo: str) -> RepoConfig:
-        for repo_config in self.settings.repos:
+        for repo_config in self._repos:
             if repo_config.repo == repo:
                 return repo_config
-        available = ", ".join(sorted(item.repo for item in self.settings.repos)) or "none"
+        available = ", ".join(sorted(item.repo for item in self._repos)) or "none"
         raise ValueError(
             f"Repo '{repo}' is not registered in TASK_RUNNER_REPOS. Registered repos: {available}"
         )
 
     def list_repo_configs(self) -> list[dict[str, Any]]:
-        values = []
-        for repo in self.settings.repos:
-            value = asdict(repo)
-            value["mcp_servers"] = dict(repo.mcp_servers)
-            values.append(value)
-        return values
+        return [self._repo_to_dict(repo) for repo in self._repos]
+
+    @staticmethod
+    def _repo_to_dict(repo: RepoConfig) -> dict[str, Any]:
+        value = asdict(repo)
+        value["mcp_servers"] = dict(repo.mcp_servers)
+        return value
+
+    def replace_repo_configs(self, values: Any) -> list[dict[str, Any]]:
+        repos = parse_repo_configs(values)
+        self._validate_repo_set(repos)
+        serialized = [self._repo_to_dict(repo) for repo in repos]
+        self.database.replace_repo_configs(serialized)
+        self._repos = repos
+        for repo in repos:
+            self._repo_queues.setdefault(repo.repo, RunnerQueue())
+        return serialized
+
+    @staticmethod
+    def _validate_repo_set(repos: list[RepoConfig]) -> None:
+        forgejo_base_urls = {
+            repo.host_base_url for repo in repos if repo.host == "forgejo"
+        }
+        if len(forgejo_base_urls) > 1:
+            raise ValueError("Configured Forgejo repositories must use the same host_base_url")
 
     def _can_admit(self, repo: str) -> bool:
         queue = self._repo_queues[repo]
