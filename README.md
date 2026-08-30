@@ -2,6 +2,8 @@
 
 # Variflex
 
+> **⚠️ Archived.** This repository is no longer maintained on GitHub. Development has moved to a private, self-hosted Forgejo instance. This snapshot is kept for historical reference only — issues, pull requests, and pushes here are no longer monitored or accepted.
+
 Variflex is a self-hosted orchestrator that dispatches GitHub issues to isolated, ephemeral AI coding-agent runners (Codex today) and reports structured results back. It's built for sustained, unattended runs — not just one-off dispatches — which means it treats things like rate limits, restarts, and partial failures as first-class cases rather than edge cases to work around later.
 
 ## Why this exists
