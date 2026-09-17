@@ -23,3 +23,5 @@ services:
 
 volumes:
   variflex-data:
+    external: true
+    name: variflex-dev_variflex-data
